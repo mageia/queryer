@@ -34,7 +34,7 @@ impl DerefMut for DataSet {
 impl DataSet {
     pub fn to_csv(&mut self) -> Result<String> {
         let mut buf = Vec::new();
-        let writer = CsvWriter::new(&mut buf);
+        let mut writer = CsvWriter::new(&mut buf);
         writer.finish(self)?;
         Ok(String::from_utf8(buf)?)
     }
@@ -55,8 +55,10 @@ pub async fn query<T: AsRef<str>>(sql: T) -> Result<DataSet> {
         offset,
         limit,
         order_by,
+        group_by,
     } = sql.try_into()?;
 
+    println!("selection: {:?}", selection);
     tracing::info!("retrieving data from source: {}", source);
 
     let ds = detect_content(retrieve_data(source).await?).load()?;
@@ -65,6 +67,8 @@ pub async fn query<T: AsRef<str>>(sql: T) -> Result<DataSet> {
         Some(expr) => ds.0.lazy().filter(expr),
         None => ds.0.lazy(),
     };
+
+    println!("group_by: {:?}", group_by.to_vec());
 
     filtered = order_by.into_iter().fold(filtered, |acc, (col, desc)| {
         acc.sort(

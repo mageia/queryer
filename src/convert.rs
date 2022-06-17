@@ -8,34 +8,24 @@ use sqlparser::ast::{
 };
 
 pub struct Sql<'a> {
-    pub(crate) selection: Vec<Expr>,
-    pub(crate) condition: Option<Expr>,
-    pub(crate) source: &'a str,
-    pub(crate) group_by: &'a Vec<Expr>,
-    pub(crate) order_by: Vec<(String, bool)>,
-    pub(crate) offset: Option<i64>,
-    pub(crate) limit: Option<usize>,
+    pub selection: Vec<Expr>,
+    pub group_by: Vec<Expr>,
+    pub condition: Option<Expr>,
+    pub source: &'a str,
+    pub order_by: Vec<(String, bool)>,
+    pub offset: Option<i64>,
+    pub limit: Option<usize>,
 }
 
-pub struct Expression(pub(crate) Box<SqlExpr>);
-pub struct Operation(pub(crate) SqlBinaryOperator);
-pub struct Projection<'a>(pub(crate) &'a SelectItem);
-pub struct Source<'a>(pub(crate) &'a [TableWithJoins]);
-pub struct Order<'a>(pub(crate) &'a OrderByExpr);
-pub struct Offset<'a>(pub(crate) &'a SqlOffset);
-pub struct Limit<'a>(pub(crate) &'a SqlExpr);
-pub struct Value(pub(crate) SqlValue);
-pub struct GroupBy(pub(crate) Vec<Expr>);
-
-impl TryFrom<GroupBy> for Expr {
-    type Error = anyhow::Error;
-
-    fn try_from(gb: GroupBy) -> Result<Self, Self::Error> {
-        println!("{:#?}", gb.0);
-
-        Ok(Expr::Count)
-    }
-}
+pub struct Expression(Box<SqlExpr>);
+pub struct Operation(SqlBinaryOperator);
+pub struct Projection<'a>(&'a SelectItem);
+pub struct Source<'a>(&'a [TableWithJoins]);
+pub struct Order<'a>(&'a OrderByExpr);
+pub struct Offset<'a>(&'a SqlOffset);
+pub struct Limit<'a>(&'a SqlExpr);
+pub struct Value(SqlValue);
+pub struct GroupBy<'a>(&'a SqlExpr);
 
 impl TryFrom<Expression> for Expr {
     type Error = anyhow::Error;
@@ -75,6 +65,17 @@ impl TryFrom<Operation> for Operator {
             SqlBinaryOperator::And => Ok(Self::And),
             SqlBinaryOperator::Or => Ok(Self::Or),
             v => Err(anyhow!("Operator {} is not supported", v)),
+        }
+    }
+}
+
+impl<'a> TryFrom<GroupBy<'a>> for Expr {
+    type Error = anyhow::Error;
+
+    fn try_from(gb: GroupBy<'a>) -> Result<Self, Self::Error> {
+        match gb.0 {
+            SqlExpr::Identifier(id) => Ok(col(&id.value)),
+            v => Err(anyhow!("expr {:#?} is not supported", v)),
         }
     }
 }
@@ -193,7 +194,7 @@ impl<'a> TryFrom<&'a Statement> for Sql<'a> {
                     from: table_with_joins,
                     selection: where_clause,
                     projection,
-                    group_by,
+                    group_by: group_by_clause,
                     ..
                 } = match &q.body {
                     SetExpr::Select(statement) => statement.as_ref(),
@@ -206,9 +207,17 @@ impl<'a> TryFrom<&'a Statement> for Sql<'a> {
                     None => None,
                 };
 
+                let mut group_by = Vec::with_capacity(8);
+                for g in group_by_clause {
+                    group_by.push(GroupBy(g).try_into()?);
+                }
+
                 let mut selection = Vec::with_capacity(8);
                 for p in projection {
                     let expr = Projection(p).try_into()?;
+                    // if expr in selection {
+                    //     return Err(anyhow!("Duplicate column {}", expr));
+                    // }
                     selection.push(expr);
                 }
 
@@ -219,8 +228,6 @@ impl<'a> TryFrom<&'a Statement> for Sql<'a> {
 
                 let offset = offset.map(|v| Offset(v).into());
                 let limit = limit.map(|v| Limit(v).into());
-
-                println!("# @@@@@@@@@@@@@@ {:?}", group_by);
 
                 Ok(Sql {
                     selection,
@@ -260,5 +267,6 @@ mod tests {
         assert_eq!(sql.offset, Some(10));
         assert_eq!(sql.order_by, vec![("c".into(), true)]);
         assert_eq!(sql.selection, vec![col("a"), col("b"), col("c")]);
+        assert_eq!(sql.group_by, vec![col("c")]);
     }
 }
